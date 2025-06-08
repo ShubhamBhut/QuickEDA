@@ -5,6 +5,10 @@ from scipy import stats
 from statsmodels.stats.diagnostic import het_breuschpagan, het_white
 import statsmodels.api as sm
 from statsmodels.formula.api import ols
+from sklearn.linear_model import LinearRegression
+from sklearn import preprocessing
+from typing import List, Tuple, Dict
+
 
 def univariate_stats(
     df: pd.DataFrame,
@@ -227,5 +231,143 @@ def bivariate_stats(df: pd.DataFrame, label: str) -> pd.DataFrame:
         key=abs, 
         ascending=False
     ).reset_index(drop=True)
+
+def prepare_multivariate_data(df: pd.DataFrame, numeric_only: bool = True) -> pd.DataFrame:
+    """
+    Prepare data for multivariate analysis by:
+    - One-hot encoding categorical variables
+    - Normalizing numeric features (optional)
+    
+    Args:
+        df: Input DataFrame
+        numeric_only: Whether to keep only numeric columns
+        
+    Returns:
+        Processed DataFrame ready for analysis
+    """
+    # One-hot encode categoricals
+    for col in df.select_dtypes(exclude=np.number):
+        df = df.join(pd.get_dummies(df[col], prefix=col, drop_first=True))
+    
+    if numeric_only:
+        df = df.select_dtypes(np.number)
+    
+    # Normalization of data
+    scaler = preprocessing.MinMaxScaler()
+    return pd.DataFrame(scaler.fit_transform(df), columns=df.columns)
+
+def calculate_vif(df: pd.DataFrame, target: str = None) -> pd.DataFrame:
+    """
+    Calculate Variance Inflation Factor (VIF) for features.
+    
+    Args:
+        df: Prepared DataFrame (normalized, numeric-only)
+        target: Optional target column to exclude from VIF calculation
+        
+    Returns:
+        DataFrame with VIF and tolerance values
+    """
+    features = [col for col in df.columns if col != target]
+    vif_results = pd.DataFrame(index=features, columns=['VIF', 'tolerance'])
+    
+    for col in features:
+        y = df[col]
+        X = df.drop(columns=[col])
+        
+        r_squared = LinearRegression().fit(X, y).score(X, y)
+        tolerance = 1 - r_squared
+        vif = 1 / tolerance if tolerance > 0 else np.inf
+        
+        vif_results.loc[col] = [vif, tolerance]
+    
+    return vif_results.sort_values('VIF')
+
+def fit_linear_model(df: pd.DataFrame, target: str) -> sm.regression.linear_model.RegressionResultsWrapper:
+    """
+    Fit a multivariate linear regression model.
+    
+    Args:
+        df: Prepared DataFrame
+        target: Name of target variable
+        
+    Returns:
+        Statsmodels regression results object
+    """
+    y = df[target]
+    X = sm.add_constant(df.drop(columns=[target]))
+    return sm.OLS(y, X).fit()
+
+def get_model_coefficients(results) -> pd.DataFrame:
+    """
+    Extract and format model coefficients.
+    
+    Args:
+        results: Statsmodels regression results
+        
+    Returns:
+        DataFrame of coefficients with t-stats and p-values
+    """
+    coef_df = pd.DataFrame({
+        'coefficient': results.params,
+        't_stat': abs(results.tvalues),
+        'p_value': results.pvalues
+    })
+    return coef_df.drop('const').sort_values(['t_stat', 'p_value'], ascending=[False, True])
+
+def get_model_metrics(results, actual: pd.Series) -> Dict[str, float]:
+    """
+    Calculate key regression metrics.
+    
+    Args:
+        results: Fitted model
+        actual: Actual target values
+        
+    Returns:
+        Dictionary of model metrics
+    """
+    residuals = actual - results.fittedvalues
+    return {
+        'r_squared': results.rsquared,
+        'adj_r_squared': results.rsquared_adj,
+        'rmse': np.sqrt(np.mean(residuals**2)),
+        'mae': np.mean(np.abs(residuals))
+    }
+
+def stepwise_regression(df: pd.DataFrame, target: str, min_features: int = 2) -> pd.DataFrame:
+    """
+    Perform stepwise feature elimination.
+    
+    Args:
+        df: Original DataFrame
+        target: Target variable name
+        min_features: Minimum number of features to keep
+        
+    Returns:
+        DataFrame tracking model performance at each step
+    """
+    prepared_df = prepare_multivariate_data(df)
+    results = []
+    
+    current_df = prepared_df.copy()
+    model = fit_linear_model(current_df, target)
+    
+    while len(model.params) > min_features:
+        # Record current model performance
+        metrics = get_model_metrics(model, current_df[target])
+        results.append({
+            'n_features': len(model.params) - 1,  # exclude constant
+            'features': list(current_df.columns.drop(target)),
+            **metrics
+        })
+        
+        # Weakest feature removal
+        coefs = get_model_coefficients(model)
+        weakest = coefs.index[-1]
+        current_df = current_df.drop(columns=[weakest])
+        
+        # Refit model
+        model = fit_linear_model(current_df, target)
+    
+    return pd.DataFrame(results).set_index('n_features')
 
 

@@ -1,5 +1,5 @@
 from QuickEDA.plotting_manager import PlottingManager
-from .stats import univariate_stats, split_univariate_stats
+from .stats import univariate_stats, split_univariate_stats, bivariate_stats, calculate_regression_stats, check_heteroscedasticity, calculate_group_stats, prepare_multivariate_data, calculate_vif, fit_linear_model, get_model_metrics, get_model_coefficients, stepwise_regression
 # from .preprocessing import clean_data
 
 
@@ -92,6 +92,46 @@ class DataAnalyzer:
                 )
         
         return stats_df, plots
+
+    def multivariate_analysis(self, target: str, method: str = 'full', min_features: int = 2):
+        """
+        Perform multivariate analysis on the dataset.
+        
+        Args:
+            target: Name of the target variable
+            method: Analysis type ('full', 'vif', or 'stepwise')
+            min_features: Minimum features to keep (for stepwise)
+            
+        Returns:
+            Analysis results (format varies by method)
+            
+        Examples:
+            >>> # Full model with all features
+            >>> results = analyzer.multivariate_analysis('price')
+            
+            >>> # Check multicollinearity
+            >>> vif_results = analyzer.multivariate_analysis('price', method='vif')
+            
+            >>> # Stepwise feature selection
+            >>> stepwise = analyzer.multivariate_analysis('price', method='stepwise', min_features=3)
+        """
+        prepared_df = prepare_multivariate_data(self.df)
+        
+        if method == 'vif':
+            return calculate_vif(prepared_df, target)
+        
+        model = fit_linear_model(prepared_df, target)
+        
+        if method == 'full':
+            return {
+                'coefficients': get_model_coefficients(model),
+                'metrics': get_model_metrics(model, prepared_df[target])
+            }
+        
+        if method == 'stepwise':
+            return stepwise_regression(self.df, target, min_features)
+        
+        raise ValueError("Method must be 'full', 'vif', or 'stepwise'")
 
 
     # def clean(self, strategies):
