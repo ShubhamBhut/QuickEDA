@@ -1,11 +1,12 @@
+from QuickEDA.plotting_manager import PlottingManager
 from .stats import univariate_stats, split_univariate_stats
 # from .preprocessing import clean_data
 
 
 class DataAnalyzer:
-    def __init__(self, df, backend="plotly"):
+    def __init__(self, df):
         self.df = df
-        self.set_backend(backend)
+        self.plotter = PlottingManager()
 
     def set_backend(self, backend):
         self.backend = backend
@@ -38,6 +39,59 @@ class DataAnalyzer:
         if split_results:
             return split_univariate_stats(self.df)
         return univariate_stats(self.df, sort_by)
+
+    def bivariate_analysis(self, label: str, plot_backend: str = 'seaborn'):
+        """
+        Perform comprehensive bivariate analysis between each feature and the target.
+        
+        Args:
+            label: Target variable name for analysis
+            plot_backend: Visualization library to use ('seaborn' or 'plotly')
+            
+        Returns:
+            Tuple of:
+            - DataFrame with statistical test results
+            - Dictionary of visualization objects
+            
+        Examples:
+            >>> analyzer = DataAnalyzer(df)
+            >>> stats, plots = analyzer.bivariate_analysis('price')
+            >>> stats, plots = analyzer.bivariate_analysis('price', plot_backend='plotly')
+        """
+        self.plotter.set_backend(plot_backend)
+        results = {}
+        plots = {}
+        
+        stats_df = bivariate_stats(self.df, label)
+        
+        for _, row in stats_df.iterrows():
+            feature = row['feature']
+            if row['test_type'] == 'pearson_r':
+                # Generate scatter plot for numeric features
+                stats = calculate_regression_stats(self.df[feature], self.df[label])
+                het_test = check_heteroscedasticity(
+                    self.df[[feature, label]], 
+                    feature, 
+                    label
+                )
+                plots[feature] = self.plotter.scatter(
+                    self.df[feature], 
+                    self.df[label],
+                    stats=stats,
+                    heteroscedasticity=het_test
+                )
+            elif row['test_type'] == 'anova_f':
+                # Generate bar plot for categorical features
+                stats = calculate_group_stats(self.df, feature, label)
+                plots[feature] = self.plotter.bar_chart(
+                    self.df, 
+                    feature, 
+                    label,
+                    anova_results=stats['anova'],
+                    pairwise_tests=stats['pairwise_tests']
+                )
+        
+        return stats_df, plots
 
 
     # def clean(self, strategies):
